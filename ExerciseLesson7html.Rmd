@@ -1,0 +1,93 @@
+---
+title: "Exercise Lesson 7"
+author: "Janna & Stefan"
+date: "Wednesday, January 14, 2015"
+output: html_document
+---
+
+This is our result of the exercise of Lesson 7
+
+First we load the libraries:
+```{r}
+library(raster)
+```
+
+Next we load the data from the data folder:
+```{r}
+load("data/GewataB1.rda")
+load("data/GewataB2.rda")
+load("data/GewataB3.rda")
+load("data/GewataB4.rda")
+load("data/GewataB5.rda")
+load("data/GewataB7.rda")
+load("data/vcfGewata.rda")
+```
+
+Then we remove the unrealistic values from the vcf file (which contains tree cover):
+```{r}
+vcfGewata[vcfGewata > 100] <- NA
+```
+
+After that we put the bands together in a brick...
+```{r}
+gewata <- brick(GewataB1, GewataB2, GewataB3, GewataB4, GewataB5, GewataB7, vcfGewata)
+gewata_novcf <- brick(GewataB1, GewataB2, GewataB3, GewataB4, GewataB5, GewataB7)
+```
+
+... and we plot the bands in pairs to show correlations:
+```{r}
+pairs(gewata)
+```
+
+Now we choose the bands with the highest correlation and we plot them seperately:
+```{r}
+pairs(brick(GewataB7, vcfGewata))
+pairs(brick(GewataB3, vcfGewata))
+```
+
+Now we create the linear model, which predicts the VCF with the reflections of the different bands.
+In the summary a column named 'Pr(>|t|)' is given. Small values mean that the probability that this correlation results from coincidence is really small, so the bands with the small p-values are important: these are all the bands except for band 7.
+```{r}
+valuetable <- as.data.frame(getValues(gewata))
+modelLM <- lm(formula = vcf2000Gewata ~ gewataB1 + gewataB2 + gewataB3 + gewataB4 + gewataB5 + gewataB7, data = valuetable)
+summary(modelLM)
+```
+
+Now we make the predicted tree cover raster and plot it:
+```{r fig.width=10}
+predLC <- predict(gewata_novcf, model=modelLM, na.rm=TRUE)
+predLC[predLC < 0] <- NA
+
+plot(predLC, main="Predicted forest coverage", zlim=c(0,100))
+plot(gewata$vcf2000Gewata, main="Actual forest coverage", zlim=c(0,100))
+```
+
+Then we calculate the RMSE by using rasterlayers:
+```{r}
+sqdif <- (gewata$vcf2000Gewata-predLC)^2
+sqdifdf <- as.data.frame(sqdif)
+RMSE_rasterlayer<-sqrt(mean(sqdifdf$layer, na.rm=TRUE))
+RMSE_rasterlayer
+```
+
+It is also possible to calculate the RMSE by doing the following:
+```{r}
+RMSE_cellstats <- sqrt(cellStats(((gewata$vcf2000Gewata-predLC)^2), stat='mean'))
+RMSE_cellstats
+```
+
+The last part is to calculate the difference between the actual and predicted tree coverage per class
+```{r}
+differenceTC<-(gewata$vcf2000Gewata-predLC)^2
+
+load("data/trainingPoly.rda")
+trainingPoly@data$Code <- as.numeric(trainingPoly@data$Class)
+ndvi <- overlay(GewataB4, GewataB3, fun=function(x,y){(x-y)/(x+y)})
+classes <- rasterize(trainingPoly, ndvi, field='Code')
+
+averagediff<-zonal(differenceTC, classes)
+RMSEClasses<-sqrt(averagediff[,2])
+RMSEClasses
+```
+
+This results in an RMSE=8.87 for cropland, an RMSE=4.99 for forest and an RMSE=11.91 for wetland. This means that the difference between the predicted and actual tree cover is the biggest for wetland.
